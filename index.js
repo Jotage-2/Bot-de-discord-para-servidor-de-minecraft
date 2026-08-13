@@ -22,7 +22,9 @@ const net = require("net");
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
-const GUILD_ID = process.env.DISCORD_GUILD_ID;
+const GUILD_IDS = process.env.DISCORD_GUILD_IDS
+    .split(",")
+    .map(id => id.trim());
 
 const WEBHOOK_START = process.env.WEBHOOK_START;
 const WEBHOOK_STOP = process.env.WEBHOOK_STOP;
