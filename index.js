@@ -86,17 +86,23 @@ async function registerCommands() {
 
     console.log("Registrando comandos de Discord...");
 
-    await rest.put(
-        Routes.applicationGuildCommands(
-            CLIENT_ID,
-            GUILD_ID
-        ),
-        {
-            body: commands
-        }
-    );
+    for (const guildId of GUILD_IDS) {
+        await rest.put(
+            Routes.applicationGuildCommands(
+                CLIENT_ID,
+                guildId
+            ),
+            {
+                body: commands
+            }
+        );
 
-    console.log("Comandos registrados correctamente.");
+        console.log(
+            `Comandos registrados en guild ${guildId}`
+        );
+    }
+
+    console.log("Todos los comandos fueron registrados.");
 }
 
 // ============================================================
