@@ -626,11 +626,23 @@ client.on(
 
 async function main() {
     try {
-        await registerCommands();
+        // Primero conectamos el bot al Gateway de Discord.
+        // Así el bot puede responder interacciones aunque el registro
+        // de comandos tarde o tenga algún problema temporal.
+        await client.login(DISCORD_TOKEN);
 
-        await client.login(
-            DISCORD_TOKEN
-        );
+        console.log("Login de Discord completado.");
+
+        // Registramos/actualizamos los slash commands después del login.
+        try {
+            await registerCommands();
+        } catch (error) {
+            console.error(
+                "Error registrando comandos de Discord:",
+                error
+            );
+        }
+
     } catch (error) {
         console.error(
             "Error iniciando el bot:",
