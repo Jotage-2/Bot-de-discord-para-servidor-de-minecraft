@@ -623,17 +623,44 @@ client.on(
 // ============================================================
 // INICIO
 // ============================================================
+async function testDiscordConnection() {
+    console.log("Probando conexión HTTPS con Discord...");
+
+    try {
+        const response = await axios.get(
+            "https://discord.com/api/v10/users/@me",
+            {
+                headers: {
+                    Authorization: `Bot ${DISCORD_TOKEN}`
+                },
+                timeout: 10000
+            }
+        );
+
+        console.log(
+            `Discord REST OK: ${response.data.username}`
+        );
+
+    } catch (error) {
+        console.error(
+            "Discord REST FALLÓ:",
+            error.code,
+            error.response?.status,
+            error.message
+        );
+    }
+}
 
 async function main() {
     try {
-        // Primero conectamos el bot al Gateway de Discord.
-        // Así el bot puede responder interacciones aunque el registro
-        // de comandos tarde o tenga algún problema temporal.
+        await testDiscordConnection();
+
+        console.log("Intentando conectar al Gateway de Discord...");
+
         await client.login(DISCORD_TOKEN);
 
         console.log("Login de Discord completado.");
 
-        // Registramos/actualizamos los slash commands después del login.
         try {
             await registerCommands();
         } catch (error) {
@@ -648,8 +675,6 @@ async function main() {
             "Error iniciando el bot:",
             error
         );
-
-        process.exit(1);
     }
 }
 const PORT = process.env.PORT || 3000;
