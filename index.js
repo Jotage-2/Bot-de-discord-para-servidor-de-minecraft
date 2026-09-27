@@ -49,6 +49,74 @@ const client = new Client({
     ]
 });
 
+// Registra solo datos del error; nunca tokens ni URLs de webhooks.
+function logBotError(context, error) {
+    console.error(context, {
+        name: error?.name || "Error",
+        code: error?.code || "UNKNOWN",
+        status: error?.status || error?.response?.status
+    });
+}
+
+function interactionLabel(interaction) {
+    return interaction.commandName
+        ? `/${interaction.commandName}`
+        : interaction.customId?.split(":")[0] || "interacción";
+}
+
+function interactionAge(interaction) {
+    return Date.now() - interaction.createdTimestamp;
+}
+
+async function deferCommand(interaction) {
+    await interaction.deferReply();
+    console.log(
+        `[Interaction] ${interactionLabel(interaction)} confirmado; edad=${interactionAge(interaction)}ms`
+    );
+}
+
+async function handleInteractionError(interaction, error) {
+    logBotError(
+        `[Interaction] ${interactionLabel(interaction)} falló; edad=${interactionAge(interaction)}ms`,
+        error
+    );
+
+    // Una interacción vencida no se puede confirmar de nuevo.
+    // Tampoco respondemos si otra instancia ya la confirmó.
+    if (error?.code === 10062 || error?.code === 40060) {
+        console.warn("[Interaction] Respuesta descartada; el bot sigue funcionando.");
+        return;
+    }
+
+    try {
+        const content = "❌ No pude completar este comando. Prueba de nuevo en unos segundos.";
+        if (interaction.deferred || interaction.replied) {
+            await interaction.editReply({ content });
+        } else {
+            await interaction.reply({ content, ephemeral: true });
+        }
+    } catch (replyError) {
+        logBotError("[Interaction] No se pudo enviar el mensaje de error", replyError);
+    }
+}
+
+client.on(Events.Error, error => logBotError("[Discord] Error del cliente", error));
+client.on(Events.ShardError, (error, shardId) => {
+    logBotError(`[Discord] Error del Gateway; shard=${shardId}`, error);
+});
+client.on(Events.ShardDisconnect, (event, shardId) => {
+    console.warn(`[Discord] Gateway desconectado; shard=${shardId}; code=${event.code}`);
+});
+client.on(Events.ShardReconnecting, shardId => {
+    console.warn(`[Discord] Reconectando Gateway; shard=${shardId}`);
+});
+client.on(Events.ShardReady, shardId => {
+    console.log(`[Discord] Gateway listo; shard=${shardId}`);
+});
+client.on(Events.ShardResume, (shardId, replayedEvents) => {
+    console.log(`[Discord] Sesión recuperada; shard=${shardId}; eventos=${replayedEvents}`);
+});
+
 // ============================================================
 // COMANDOS SLASH
 // ============================================================
@@ -239,9 +307,20 @@ client.once(
 // INTERACCIONES
 // ============================================================
 
-client.on(
-    Events.InteractionCreate,
-    async interaction => {
+client.on(Events.InteractionCreate, async interaction => {
+    if (!interaction.isChatInputCommand() && !interaction.isButton()) return;
+
+    console.log(
+        `[Interaction] ${interactionLabel(interaction)} recibido; edad=${interactionAge(interaction)}ms`
+    );
+    try {
+        await handleInteraction(interaction);
+    } catch (error) {
+        await handleInteractionError(interaction, error);
+    }
+});
+
+async function handleInteraction(interaction) {
 
         // ====================================================
         // BOTONES
@@ -409,7 +488,7 @@ client.on(
 }
         if (interaction.commandName === "start") {
 
-            await interaction.deferReply();
+            await deferCommand(interaction);
 
             try {
 
@@ -486,7 +565,7 @@ client.on(
 
         if (interaction.commandName === "stop") {
 
-            await interaction.deferReply();
+            await deferCommand(interaction);
 
             try {
 
@@ -544,7 +623,7 @@ client.on(
 
         if (interaction.commandName === "status") {
 
-            await interaction.deferReply();
+            await deferCommand(interaction);
 
             const online =
                 await isMinecraftOnline();
@@ -617,8 +696,7 @@ client.on(
 
             return;
         }
-    }
-);
+}
 
 // ============================================================
 // INICIO
@@ -665,26 +743,54 @@ async function main() {
             await registerCommands();
         } catch (error) {
             console.error(
-                "Error registrando comandos de Discord:",
-                error
+                "Discord REST FALLÓ:",
+                error.code,
+                error.response?.status,
+                error.message
+            );
+
+            console.error(
+                "Respuesta Discord:",
+                error.response?.data
+            );
+
+            console.error(
+                "Retry-After:",
+                error.response?.headers?.["retry-after"]
+            );
+
+            console.error(
+                "X-RateLimit-Scope:",
+                error.response?.headers?.["x-ratelimit-scope"]
             );
         }
 
     } catch (error) {
-        console.error(
-            "Error iniciando el bot:",
-            error
-        );
+        logBotError("Error iniciando el bot", error);
     }
 }
 const PORT = process.env.PORT || 3000;
 
 const server = http.createServer((req, res) => {
-    res.writeHead(200, {
-        "Content-Type": "text/plain"
-    });
+    const discordReady = client.isReady();
+    const status = discordReady ? 200 : 503;
 
-    res.end("Minecraft Discord Bot is running.");
+    if (req.url?.split("?")[0] === "/healthz") {
+        res.writeHead(status, {
+            "Content-Type": "application/json",
+            "Cache-Control": "no-store"
+        });
+        res.end(JSON.stringify({ discordReady }));
+        return;
+    }
+
+    res.writeHead(status, {
+        "Content-Type": "text/plain",
+        "Cache-Control": "no-store"
+    });
+    res.end(discordReady
+        ? "Minecraft Discord Bot is running."
+        : "Minecraft Discord Bot is connecting to Discord.");
 });
 
 server.listen(PORT, "0.0.0.0", () => {
