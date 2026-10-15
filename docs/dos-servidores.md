@@ -1,16 +1,28 @@
 # Dos mundos en una VM
 
-## Estado actual
+## Estado al 15 de octubre de 2026
 
-El bot usa tres webhooks de Azure Automation. `/start` enciende la VM y el
-servicio `minecraft.service` inicia Paper automáticamente; `/stop` desasigna
-la VM. El comando llamado `/restart` **borra el mundo** y genera uno nuevo.
-Colegio está en `/home/azureuser/minecraft`, Paper 26.2, puerto 25565, con
-`online-mode=false`, sin whitelist, y con SkinsRestorer y CleanPing. Hay una
-copia íntegra previa a la migración en
-`/home/azureuser/minecraft-backups/colegio-pre-dual-20261009T014135Z.tar.gz`
-(SHA-256 `b52bcf67b08def0afb216a80ca703729818b891cde2aa0d55aba93bc4bb23308`).
-El servicio volvió a quedar activo en 25565 tras crearla.
+El código dual está publicado en GitHub y desplegado en Render, pero sigue
+desactivado mientras `WORLD_MODE` no sea `dual`. Los seis webhooks por mundo y
+acción ya existen en Azure Automation y sus URL están guardadas como variables
+privadas de Render. El bot todavía atiende los comandos antiguos.
+
+Colegio está en `/home/azureuser/minecraft`, puerto 25565. Universidad está en
+`/home/azureuser/minecraft-universidad`, puerto 25566. Ambos servicios Paper
+26.2 arrancaron simultáneamente en la VM de 4 GiB, cada uno con `-Xmx1280M`;
+quedaron aproximadamente 1.7 GiB disponibles durante la prueba sin jugadores.
+El runbook se probó con `start universidad`, `stop universidad` y otro
+`start universidad`: Colegio permaneció activo, y al final ambos servicios
+quedaron activos y escuchando en 25565/25566. Tras el segundo inicio había
+aproximadamente 1.6 GiB disponibles sin jugadores. No se ejecutó la acción
+destructiva `reset` sobre ninguno de los mundos.
+La copia reciente de Colegio es
+`/home/azureuser/minecraft-backups/colegio-before-authme-final-20261015T060807Z.tar.gz`
+(SHA-256 `08492bf5048471f9950c043949f5c73cb21402e5bda1bcdcbd6176b4fcc47b21`).
+
+Universidad ya tiene `eula=true` por autorización expresa del propietario,
+pero el puerto 25566 todavía no tiene regla pública en Azure. Colegio conserva
+el arranque automático con la VM hasta que el modo dual esté activo.
 
 ## Comportamiento objetivo
 
@@ -24,27 +36,26 @@ El servicio volvió a quedar activo en 25565 tras crearla.
    final con el nombre del mundo y solo entonces archiva el mundo anterior y
    regenera **ese** mundo. Nunca debe afectar el otro.
 
-Cada mundo tendrá directorio, `server.properties`, mundo, lista de operadores,
-lista de jugadores y servicio systemd propios. Se propone conservar el puerto
-25565 para el mundo existente, que será Colegio, y asignar 25566 a
-Universidad. Ambos podrán estar
-ejecutarse a la vez. La VM tiene solo 4 GiB de RAM: ambos Java empezarán con
+Cada mundo tiene directorio, `server.properties`, mundo, lista de operadores,
+lista de jugadores y servicio systemd propios. Colegio conserva el puerto
+25565 y Universidad usa 25566. Ambos pueden ejecutarse a la vez. La VM tiene
+4 GiB de RAM: ambos Java arrancan con
 un máximo de 1280 MiB cada uno, dejando margen al sistema operativo y a la
 memoria nativa de Java. Colegio consumía aproximadamente 1.4 GiB RSS con un
 límite de 3 GiB y sin jugadores conectados; medir el consumo real con los dos
 servidores activos y ajustar si hay presión de memoria. El arranque automático de
-`minecraft.service` deberá desactivarse después de preparar y verificar los
-nuevos servicios.
+`minecraft.service` se desactivará cuando se active el modo dual.
 
-Cada servidor tendrá su propia whitelist y base de autenticación. Ambos
-grupos tienen jugadores no premium, por lo que `online-mode=false` es
-necesario. En ese modo una whitelist sola no evita que alguien suplante un
-nombre autorizado. Antes de abrir Universidad al público y dar por protegidos
-los mundos hay que instalar y probar un complemento de autenticación dentro
-del juego en cada servidor. La palabra clave protege los comandos del bot,
-no el acceso directo al juego. Para evitar un bloqueo imprevisto de Colegio,
-la instalación del complemento allí se hará cuando los jugadores sepan que
-deberán registrarse e iniciar sesión.
+Por elección expresa del propietario, ambos servidores usan
+`online-mode=false`, sin whitelist ni autenticación dentro de Minecraft. La
+clave de Discord protege únicamente el encendido, apagado y regeneración.
+Mientras un mundo esté encendido, cualquiera que conozca su dirección puede
+intentar entrar con un nombre no premium. Los OP `Jogate_2` y `JG2_SES206`
+permanecen en Colegio; un tercero que suplante esos nombres podría recibir OP.
+El propietario decidió conservarlos aun con ese riesgo. Universidad no tiene
+OP preconfigurados. Si se quiere verificar identidades al entrar, hay que
+incorporar autenticación dentro del juego o una aprobación por conexión en
+Discord antes de considerar protegido el acceso de jugadores.
 
 La autorización será una palabra clave diferente por mundo introducida en un
 modal de Discord visible solo a quien ejecuta el comando. Render almacenará
@@ -55,13 +66,6 @@ La palabra clave nunca debe registrarse en logs, incluirse en mensajes
 públicos ni enviarse a Azure Automation. Las URL de los webhooks siguen siendo
 secretos de Render. Las solicitudes de `/restart` se limitarán por usuario
 para dificultar intentos de adivinar la palabra clave.
-
-## Comprobaciones previas en la VM
-
-Recoger la salida de `systemctl cat minecraft.service`, `free -h` y `df -h /`.
-Confirmar si se requiere que ambos servidores estén encendidos a la vez.
-Hacer una copia del mundo y de la unidad
-systemd antes de modificar el arranque.
 
 ## Despliegue
 
@@ -74,12 +78,11 @@ el último mundo. Después configurar las nuevas variables de entorno en
 Render, desplegar el bot y probar los flujos de inicio, estado, parada y
 regeneración de cada mundo sin borrar el mundo existente.
 
-El nuevo servidor empieza con `eula=false`; hay que leer y aceptar el EULA
-para poder iniciarlo. La regla de red de Azure solo permite hoy 25565, así que
-25566 aún no será público hasta que se configure explícitamente. Colegio
-sigue arrancando con la VM hasta que el bot, runbook y claves estén listos.
+El EULA de Universidad ya fue aceptado y el servidor se probó dentro de la VM.
+La regla de red de Azure solo permite hoy 25565. Se abrirá 25566 cuando el bot
+dual y sus claves estén configurados y el control de Azure esté verificado.
 
-El código dual permanece desactivado hasta que Render tenga WORLD_MODE=dual.
+El código dual permanece desactivado hasta que Render tenga `WORLD_MODE=dual`.
 Además necesita:
 
 - MINECRAFT_HOST y DISCORD_GUILD_IDS (ya usados por el bot).
