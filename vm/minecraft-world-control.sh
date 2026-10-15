@@ -29,7 +29,12 @@ port_open() {
 stop_world() {
     systemctl stop "$service"
     for _ in $(seq 1 60); do
-        if ! port_open; then return 0; fi
+        if ! port_open; then
+            # screen can exit with status 1 after a normal Minecraft stop.
+            # Preserve crash reporting unless this was an intentional stop.
+            systemctl reset-failed "$service"
+            return 0
+        fi
         sleep 1
     done
     echo "El puerto $port sigue abierto; no se tocarán archivos del mundo." >&2
