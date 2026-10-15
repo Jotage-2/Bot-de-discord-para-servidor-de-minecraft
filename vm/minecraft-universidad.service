@@ -1,0 +1,14 @@
+[Unit]
+Description=Minecraft Paper - Universidad
+After=network.target
+
+[Service]
+Type=simple
+User=azureuser
+WorkingDirectory=/home/azureuser/minecraft-universidad
+ExecStart=/usr/bin/screen -DmS minecraft-universidad /usr/bin/java -Xms256M -Xmx1280M -jar paper.jar --nogui
+ExecStop=/bin/bash -c '/usr/bin/screen -S minecraft-universidad -p 0 -X stuff "stop$(printf "\r")"'
+Restart=no
+
+[Install]
+WantedBy=multi-user.target
