@@ -15,6 +15,7 @@ const {
 
 const axios = require("axios");
 const net = require("net");
+const { createDualMode } = require("./dual-mode");
 
 // ============================================================
 // CONFIGURACIÓN
@@ -48,6 +49,17 @@ const client = new Client({
         GatewayIntentBits.Guilds
     ]
 });
+
+// Se activa solo tras configurar los dos servicios y webhooks en Azure.
+// El modo de un solo servidor sigue funcionando mientras WORLD_MODE no sea dual.
+const dualMode = process.env.WORLD_MODE === "dual"
+    ? createDualMode(process.env, {
+        callWebhook,
+        isOnline: isMinecraftOnline,
+        waitOnline: waitForMinecraftOnline,
+        waitOffline: waitForMinecraftOffline
+    })
+    : null;
 
 // Registra solo datos del error; nunca tokens ni URLs de webhooks.
 function logBotError(context, error) {
@@ -121,7 +133,7 @@ client.on(Events.ShardResume, (shardId, replayedEvents) => {
 // COMANDOS SLASH
 // ============================================================
 
-const commands = [
+const commands = dualMode ? dualMode.commands : [
     new SlashCommandBuilder()
         .setName("start")
         .setDescription("Enciende la VM y el servidor de Minecraft"),
@@ -188,7 +200,7 @@ async function registerCommands() {
  * Esto no consulta Azure.
  * Comprueba directamente si Paper ya está accesible.
  */
-function isMinecraftOnline() {
+function isMinecraftOnline(port = MINECRAFT_PORT) {
     return new Promise(resolve => {
         const socket = new net.Socket();
 
@@ -209,7 +221,7 @@ function isMinecraftOnline() {
         socket.setTimeout(3000);
 
         socket.connect(
-            MINECRAFT_PORT,
+            port,
             MINECRAFT_HOST,
             () => finish(true)
         );
@@ -229,11 +241,11 @@ function isMinecraftOnline() {
 /**
  * Espera hasta que Minecraft esté online.
  */
-async function waitForMinecraftOnline(timeout = START_TIMEOUT_MS) {
+async function waitForMinecraftOnline(timeout = START_TIMEOUT_MS, port = MINECRAFT_PORT) {
     const startedAt = Date.now();
 
     while (Date.now() - startedAt < timeout) {
-        const online = await isMinecraftOnline();
+        const online = await isMinecraftOnline(port);
 
         if (online) {
             return true;
@@ -248,11 +260,11 @@ async function waitForMinecraftOnline(timeout = START_TIMEOUT_MS) {
 /**
  * Espera hasta que Minecraft deje de responder.
  */
-async function waitForMinecraftOffline(timeout = 90000) {
+async function waitForMinecraftOffline(timeout = 90000, port = MINECRAFT_PORT) {
     const startedAt = Date.now();
 
     while (Date.now() - startedAt < timeout) {
-        const online = await isMinecraftOnline();
+        const online = await isMinecraftOnline(port);
 
         if (!online) {
             return true;
@@ -308,7 +320,7 @@ client.once(
 // ============================================================
 
 client.on(Events.InteractionCreate, async interaction => {
-    if (!interaction.isChatInputCommand() && !interaction.isButton()) return;
+    if (!interaction.isChatInputCommand() && !interaction.isButton() && !interaction.isModalSubmit()) return;
 
     console.log(
         `[Interaction] ${interactionLabel(interaction)} recibido; edad=${interactionAge(interaction)}ms`
@@ -321,6 +333,10 @@ client.on(Events.InteractionCreate, async interaction => {
 });
 
 async function handleInteraction(interaction) {
+
+        if (dualMode) {
+            return dualMode.handle(interaction);
+        }
 
         // ====================================================
         // BOTONES
