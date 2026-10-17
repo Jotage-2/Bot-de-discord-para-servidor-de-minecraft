@@ -172,8 +172,7 @@ function createDualMode(env, api) {
                 : "Elige el mundo de " + (action === "stop" ? "parar" : "iniciar") + ".";
         await interaction.reply({
             content: message,
-            components: selectionButtons(action, interaction.user.id),
-            ephemeral: true
+            components: selectionButtons(action, interaction.user.id)
         });
     }
 
