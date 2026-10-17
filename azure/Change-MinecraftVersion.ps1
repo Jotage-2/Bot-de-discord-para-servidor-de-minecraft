@@ -3,12 +3,13 @@ param(
     [ValidateSet('colegio', 'universidad')]
     [string] $World,
 
-    [Parameter(Mandatory = $true)]
     [object] $WebhookData
 )
 
 $ErrorActionPreference = 'Stop'
-if (-not $WebhookData.RequestBody) { throw 'Falta el cuerpo del webhook.' }
+if ($null -eq $WebhookData -or [string]::IsNullOrWhiteSpace([string] $WebhookData.RequestBody)) {
+    throw 'Falta el cuerpo del webhook. Ejecuta este runbook mediante uno de sus webhooks.'
+}
 $request = ConvertFrom-Json -InputObject $WebhookData.RequestBody
 $version = [string] $request.version
 $mode = [string] $request.mode
