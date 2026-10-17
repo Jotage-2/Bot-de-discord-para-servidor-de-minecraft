@@ -177,7 +177,7 @@ function createDualMode(env, api) {
     }
 
     async function startVmAndSelect(interaction) {
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply();
         if (operationBusy) {
             await interaction.editReply("⏳ Hay otra operación en curso. Intenta de nuevo más tarde.");
             return;
@@ -242,7 +242,7 @@ function createDualMode(env, api) {
     }
 
     async function handlePassword(interaction, parsed) {
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply();
         if (interaction.user.id !== parsed.userId) {
             await interaction.editReply("❌ Solo quien inició la solicitud puede completar este formulario.");
             return;
