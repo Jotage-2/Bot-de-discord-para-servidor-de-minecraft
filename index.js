@@ -16,6 +16,7 @@ const {
 const axios = require("axios");
 const net = require("net");
 const { createDualMode } = require("./dual-mode");
+const { createVersionCatalog } = require("./paper-versions");
 
 // ============================================================
 // CONFIGURACIÓN
@@ -57,7 +58,8 @@ const dualMode = process.env.WORLD_MODE === "dual"
         callWebhook,
         isOnline: isMinecraftOnline,
         waitOnline: waitForMinecraftOnline,
-        waitOffline: waitForMinecraftOffline
+        waitOffline: waitForMinecraftOffline,
+        getVersions: createVersionCatalog()
     })
     : null;
 
@@ -285,14 +287,14 @@ function sleep(ms) {
  *
  * Azure Automation usa POST para iniciar el runbook.
  */
-async function callWebhook(url) {
+async function callWebhook(url, body = {}) {
     if (!url) {
         throw new Error("Webhook no configurado.");
     }
 
     return axios.post(
         url,
-        {},
+        body,
         {
             timeout: 15000,
             headers: {
@@ -320,7 +322,8 @@ client.once(
 // ============================================================
 
 client.on(Events.InteractionCreate, async interaction => {
-    if (!interaction.isChatInputCommand() && !interaction.isButton() && !interaction.isModalSubmit()) return;
+    if (!interaction.isChatInputCommand() && !interaction.isButton() &&
+        !interaction.isModalSubmit() && !interaction.isStringSelectMenu()) return;
 
     console.log(
         `[Interaction] ${interactionLabel(interaction)} recibido; edad=${interactionAge(interaction)}ms`

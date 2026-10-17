@@ -6,6 +6,7 @@ const {
     ButtonStyle,
     ModalBuilder,
     SlashCommandBuilder,
+    StringSelectMenuBuilder,
     TextInputBuilder,
     TextInputStyle
 } = require("discord.js");
@@ -13,7 +14,7 @@ const {
 const scrypt = promisify(crypto.scrypt);
 const WORLD_KEYS = ["colegio", "universidad"];
 const LABELS = { colegio: "Colegio", universidad: "Universidad" };
-const ACTIONS = ["start", "stop", "restart"];
+const ACTIONS = ["start", "stop", "restart", "version"];
 const PENDING_TTL_MS = 5 * 60 * 1000;
 const ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
 const MAX_ATTEMPTS = 5;
@@ -34,6 +35,8 @@ function readConfiguration(env) {
         "WEBHOOK_UNIVERSIDAD_START",
         "WEBHOOK_UNIVERSIDAD_STOP",
         "WEBHOOK_UNIVERSIDAD_RESTART",
+        "WEBHOOK_COLEGIO_VERSION",
+        "WEBHOOK_UNIVERSIDAD_VERSION",
         "WORLD_COLEGIO_PASSWORD_HASH",
         "WORLD_UNIVERSIDAD_PASSWORD_HASH",
         "MINECRAFT_PORT_COLEGIO",
@@ -56,7 +59,8 @@ function readConfiguration(env) {
             webhooks: {
                 start: env["WEBHOOK_" + upper + "_START"],
                 stop: env["WEBHOOK_" + upper + "_STOP"],
-                restart: env["WEBHOOK_" + upper + "_RESTART"]
+                restart: env["WEBHOOK_" + upper + "_RESTART"],
+                version: env["WEBHOOK_" + upper + "_VERSION"]
             }
         };
         if (!/^scrypt\$[0-9a-f]{32}\$[0-9a-f]{64}$/i.test(worlds[key].passwordHash)) {
@@ -90,6 +94,7 @@ function commandDefinitions() {
         new SlashCommandBuilder().setName("stop").setDescription("Detiene el mundo que elijas; conserva el otro"),
         new SlashCommandBuilder().setName("status").setDescription("Muestra el estado de ambos mundos"),
         new SlashCommandBuilder().setName("restart").setDescription("Borra y regenera el mundo que elijas, tras verificar su clave"),
+        new SlashCommandBuilder().setName("version").setDescription("Cambia la versión estable de Paper de un mundo"),
         new SlashCommandBuilder().setName("comandos").setDescription("Muestra los comandos disponibles")
     ].map(command => command.toJSON());
 }
@@ -107,6 +112,7 @@ function parseCustomId(customId, kind) {
 function createDualMode(env, api) {
     const config = readConfiguration(env);
     const pendingResets = new Map();
+    const pendingVersions = new Map();
     const failedAttempts = new Map();
     let operationBusy = false;
 
@@ -161,7 +167,9 @@ function createDualMode(env, api) {
     async function showSelection(interaction, action) {
         const message = action === "restart"
             ? "⚠️ Elige el mundo que deseas BORRAR y regenerar."
-            : "Elige el mundo de " + (action === "stop" ? "parar" : "iniciar") + ".";
+            : action === "version"
+                ? "Elige el mundo cuya versión de Paper quieres cambiar."
+                : "Elige el mundo de " + (action === "stop" ? "parar" : "iniciar") + ".";
         await interaction.reply({
             content: message,
             components: selectionButtons(action, interaction.user.id),
@@ -251,6 +259,27 @@ function createDualMode(env, api) {
             return;
         }
         failedAttempts.delete(interaction.user.id);
+        if (parsed.action === "version") {
+            const versions = await api.getVersions();
+            const nonce = crypto.randomUUID();
+            pendingVersions.set(nonce, {
+                stage: "select", userId: interaction.user.id, guildId: interaction.guildId,
+                world: parsed.world, versions, expiresAt: Date.now() + PENDING_TTL_MS
+            });
+            const menu = new StringSelectMenuBuilder()
+                .setCustomId("dual:versionpick:" + nonce)
+                .setPlaceholder("Elige una versión oficial con Paper estable")
+                .addOptions(versions.map((version, index) => ({
+                    label: version + (index === 0 ? " — última estable" : ""),
+                    value: version
+                })));
+            await interaction.editReply({
+                content: "Elige la versión para " + LABELS[parsed.world] +
+                    ". Se muestran como máximo tres lanzamientos oficiales con Paper estable.",
+                components: [new ActionRowBuilder().addComponents(menu)]
+            });
+            return;
+        }
         if (parsed.action !== "restart") {
             await performAction(interaction, parsed.action, parsed.world);
             return;
@@ -271,6 +300,99 @@ function createDualMode(env, api) {
                 "**, incluidos construcciones, inventarios, Nether y End. El otro mundo no se tocará. ¿Confirmas?",
             components: [buttons]
         });
+    }
+
+    function versionRequest(interaction, nonce, stage) {
+        const pending = pendingVersions.get(nonce);
+        if (!pending || pending.stage !== stage || pending.expiresAt < Date.now() ||
+            pending.userId !== interaction.user.id || pending.guildId !== interaction.guildId) return null;
+        return pending;
+    }
+
+    async function handleVersionPick(interaction) {
+        const nonce = interaction.customId.split(":")[2];
+        const pending = versionRequest(interaction, nonce, "select");
+        if (!pending || !pending.versions.includes(interaction.values[0])) {
+            await interaction.reply({ content: "❌ Esta selección venció o no está autorizada.", ephemeral: true });
+            return;
+        }
+        pending.version = interaction.values[0];
+        pending.stage = "mode";
+        const buttons = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId("dual:versionmode:" + nonce + ":preserve")
+                .setLabel("Conservar mundo").setStyle(ButtonStyle.Primary),
+            new ButtonBuilder().setCustomId("dual:versionmode:" + nonce + ":reset")
+                .setLabel("Crear mundo nuevo").setStyle(ButtonStyle.Danger),
+            new ButtonBuilder().setCustomId("dual:versionmode:" + nonce + ":cancel")
+                .setLabel("Cancelar").setStyle(ButtonStyle.Secondary)
+        );
+        await interaction.update({
+            content: `Versión ${pending.version} para ${LABELS[pending.world]}. ¿Conservar el mundo o empezar uno nuevo?`,
+            components: [buttons]
+        });
+    }
+
+    async function handleVersionMode(interaction) {
+        const [, , nonce, mode] = interaction.customId.split(":");
+        const pending = versionRequest(interaction, nonce, "mode");
+        if (!pending || !["preserve", "reset", "cancel"].includes(mode)) {
+            await interaction.reply({ content: "❌ Esta solicitud venció o no está autorizada.", ephemeral: true });
+            return;
+        }
+        if (mode === "cancel") {
+            pendingVersions.delete(nonce);
+            await interaction.update({ content: "✅ Cancelado. No se cambiará la versión.", components: [] });
+            return;
+        }
+        pending.mode = mode;
+        pending.stage = "confirm";
+        const warning = mode === "reset"
+            ? "⚠️ Se archivarán los mundos anteriores y se generarán desde cero. Se perderán construcciones e inventarios del mundo activo."
+            : "⚠️ Se conservará el mundo con una copia previa. Si esta versión es anterior a la instalada, Paper no admite la bajada y podría dañar datos aunque el servidor llegue a iniciar.";
+        const buttons = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId("dual:versionconfirm:" + nonce + ":confirm")
+                .setLabel("Confirmar cambio").setStyle(ButtonStyle.Danger),
+            new ButtonBuilder().setCustomId("dual:versionconfirm:" + nonce + ":cancel")
+                .setLabel("Cancelar").setStyle(ButtonStyle.Secondary)
+        );
+        await interaction.update({
+            content: `**${LABELS[pending.world]} → ${pending.version}**\n${warning}\n` +
+                "El otro mundo no se modificará. ¿Confirmas?",
+            components: [buttons]
+        });
+    }
+
+    async function handleVersionConfirmation(interaction) {
+        const [, , nonce, choice] = interaction.customId.split(":");
+        const pending = versionRequest(interaction, nonce, "confirm");
+        if (!pending || !["confirm", "cancel"].includes(choice)) {
+            await interaction.reply({ content: "❌ Esta confirmación venció o no está autorizada.", ephemeral: true });
+            return;
+        }
+        pendingVersions.delete(nonce);
+        if (choice === "cancel") {
+            await interaction.update({ content: "✅ Cancelado. No se cambiará la versión.", components: [] });
+            return;
+        }
+        if (operationBusy) {
+            await interaction.update({ content: "⏳ Hay otra operación en curso. Intenta de nuevo más tarde.", components: [] });
+            return;
+        }
+        operationBusy = true;
+        try {
+            await interaction.update({
+                content: `⏳ Solicitando el cambio de ${LABELS[pending.world]} a ${pending.version}...`, components: []
+            });
+            await api.callWebhook(config.worlds[pending.world].webhooks.version, {
+                version: pending.version, mode: pending.mode
+            });
+            await interaction.editReply(
+                `☁️ Azure aceptó la solicitud para ${LABELS[pending.world]} ${pending.version}. ` +
+                "El cambio y la copia pueden tardar; la aceptación no confirma que hayan terminado."
+            );
+        } finally {
+            operationBusy = false;
+        }
     }
 
     async function handleConfirmation(interaction) {
@@ -303,10 +425,12 @@ function createDualMode(env, api) {
             if (interaction.commandName === "status") return showStatus(interaction);
             if (interaction.commandName === "stop") return showSelection(interaction, "stop");
             if (interaction.commandName === "restart") return showSelection(interaction, "restart");
+            if (interaction.commandName === "version") return showSelection(interaction, "version");
             if (interaction.commandName === "comandos") {
                 return interaction.reply({
                     content: "Usa /start para encender la VM y elegir un mundo; /status para ver ambos; " +
                         "/stop para apagar uno; /restart para **borrar y regenerar** el mundo elegido. " +
+                        "/version para elegir entre tres versiones estables. " +
                         "Las acciones de cada mundo requieren su palabra clave.",
                     ephemeral: true
                 });
@@ -314,6 +438,8 @@ function createDualMode(env, api) {
             return;
         }
         if (interaction.isButton()) {
+            if (interaction.customId.startsWith("dual:versionmode:")) return handleVersionMode(interaction);
+            if (interaction.customId.startsWith("dual:versionconfirm:")) return handleVersionConfirmation(interaction);
             if (interaction.customId.startsWith("dual:choose:")) {
                 const parsed = parseCustomId(interaction.customId, "choose");
                 if (!parsed || interaction.user.id !== parsed.userId) {
@@ -325,6 +451,9 @@ function createDualMode(env, api) {
                 return handleConfirmation(interaction);
             }
             return;
+        }
+        if (interaction.isStringSelectMenu() && interaction.customId.startsWith("dual:versionpick:")) {
+            return handleVersionPick(interaction);
         }
         if (interaction.isModalSubmit() && interaction.customId.startsWith("dual:password:")) {
             const parsed = parseCustomId(interaction.customId, "password");

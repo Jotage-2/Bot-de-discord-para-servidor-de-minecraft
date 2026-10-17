@@ -40,6 +40,18 @@ bot elija el mundo después de iniciar la VM.
 5. `/restart` pide el mundo y su palabra clave, muestra una confirmación
    final con el nombre del mundo y solo entonces archiva el mundo anterior y
    regenera **ese** mundo. Nunca debe afectar el otro.
+6. `/version` pide el mundo y su palabra clave, muestra los tres lanzamientos
+   oficiales de Minecraft Java más recientes con Paper estable y permite
+   conservar el mundo o archivarlo y crear uno nuevo. Requiere confirmación
+   final. El catálogo se consulta al ejecutar el comando: no incluye snapshots.
+
+Al conservar el mundo durante una bajada de versión, Paper puede dañarlo aunque
+logre arrancar. Se guarda una copia previa en
+`/home/azureuser/minecraft-backups/<mundo>/version-*`; si el servidor nuevo
+no abre su puerto, el script intenta restaurar el JAR y el mundo anteriores.
+Si arranca pero se observan daños, hay que detenerlo y restaurar manualmente
+esa copia. `/restart` sigue significando regenerar el mundo, sin selector de
+versión.
 
 Cada mundo tiene directorio, `server.properties`, mundo, lista de operadores,
 lista de jugadores y servicio systemd propios. Colegio conserva el puerto
@@ -95,7 +107,17 @@ El código dual está activo en Render con `WORLD_MODE=dual`. Usa:
 - WEBHOOK_VM_START, o se reutiliza el WEBHOOK_START ya configurado.
 - WEBHOOK_COLEGIO_START, WEBHOOK_COLEGIO_STOP y WEBHOOK_COLEGIO_RESTART.
 - WEBHOOK_UNIVERSIDAD_START, WEBHOOK_UNIVERSIDAD_STOP y WEBHOOK_UNIVERSIDAD_RESTART.
+- WEBHOOK_COLEGIO_VERSION y WEBHOOK_UNIVERSIDAD_VERSION para `/version`.
 - WORLD_COLEGIO_PASSWORD_HASH y WORLD_UNIVERSIDAD_PASSWORD_HASH.
+
+El cambio de versión usa `azure/Change-MinecraftVersion.ps1` con dos webhooks
+separados cuyo parámetro fijo `World` es `colegio` o `universidad`. El runbook
+invoca `/usr/local/sbin/change-minecraft-version.py` en la VM; este archivo se
+instala desde `vm/change-minecraft-version.py` con propietario root y modo
+0755. Ambos comandos de control usan el mismo archivo de bloqueo. Los URL de
+webhook son credenciales: solo deben almacenarse en las variables privadas de
+Render. Antes de desplegar el bot actualizado, configurar los dos URL para que
+el modo dual pueda iniciar correctamente.
 
 Cada hash se genera localmente con node scripts/hash-password.cjs. El script
 oculta la entrada y muestra solo el hash para copiarlo a Render. No se deben

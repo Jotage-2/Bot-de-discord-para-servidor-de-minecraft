@@ -28,6 +28,7 @@ function loadBot() {
     }
     const modules = {
         './dual-mode': { createDualMode: () => null },
+        './paper-versions': { createVersionCatalog: () => async () => [] },
         http: { createServer(handler) { httpHandler = handler; return { listen() {} }; } },
         dotenv: { config() {} },
         'discord.js': { ...discord, Client, REST },
@@ -65,7 +66,9 @@ function interaction(commandName, failureMethod, code = 10062) {
         commandName, createdTimestamp: Date.now(), deferred: false, replied: false,
         user: { id: 'user', tag: 'test-user' }, calls,
         isChatInputCommand() { return !!commandName; },
-        isButton() { return !commandName; }
+        isButton() { return !commandName; },
+        isModalSubmit() { return false; },
+        isStringSelectMenu() { return false; }
     };
     for (const method of ['deferReply', 'reply', 'update', 'editReply']) {
         item[method] = async function(payload) {
